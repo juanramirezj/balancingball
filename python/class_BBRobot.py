@@ -38,24 +38,41 @@ class BBrobot:
         # platform radius (distance from plantform center to a spherical joint)]
         #self.L = [0.098, 0.120, 0.092, 0.065]  # in meters
         
-        self.L = [0.092, 0.098, 0.12, 0.065]  # in meters
         self.L = [65,116,98,92] #in millimeters
         #L = [platform radius, upper link length, lower link length, base radius]
         # Initial posture (theta, phi, pz)
-        self.ini_pos = [0, 0, 0.110]
-        self.pz_max = 0.220 #0.0732
-        self.pz_min = 0.0532
-        self.phi_max = 20
+        self.ini_pos = [0, 0, 110]
+        self.pz_max = 220 #0.0732
+        self.pz_min = 532
+        self.phi_max = 0.8 # 1rad = 57°
 
+
+    def angulo_to_position(self,angulo):
+        valor = int(angulo * 1100 / 90) 
+        if valor < 400:
+            valor = 400
+        elif valor > 1100:
+            valor = 1100
+        
+        return valor
+    
+    def position_to_angulo(self,position):
+        valor = int(position * 90 / 1100)
+        if valor < 0:
+            valor = 0
+        elif valor > 90:
+            valor = 90
+        
+        return valor
 
     #Method to prepare the robot
     def set_up(self):
         #Turn on servo torque
         servo = self.servo
         ids = self.ids
-        position = [420, 420, 420]
+        position = [45, 45, 45] #degrees
         for j in range(len(ids)):
-            servo.MoveTo(ids[j], position[j], wait=False, speed=2400, acc = 50)
+            servo.MoveTo(ids[j], self.angulo_to_position(position[j]), wait=False, speed=2400, acc = 50)
         
     
     #Method to tidy up robots
@@ -63,9 +80,9 @@ class BBrobot:
         #Turn off servo torque
         servo = self.servo
         ids = self.ids
-        position = [420, 420, 420]
+        position = [45, 45, 45] #degrees
         for j in range(len(ids)):
-            servo.MoveTo(ids[j], position[j], wait=False, speed=2400, acc = 50)
+            servo.MoveTo(ids[j], self.angulo_to_position(position[j]), wait=False, speed=2400, acc = 50)
 
     def deg(self,x):
         return math.degrees(x)
@@ -86,7 +103,7 @@ class BBrobot:
         Returns:
             list of servo angles [θ1, θ2, θ3] in degrees
         """
-        print("Parameters for inverse kinematics:   Pz:", Pz, "L1:", L1, "L2:", L2, "R_base:", R_base, "R_platform:", R_platform, "tilt_deg:", tilt_deg)
+        # print("Parameters for inverse kinematics:   Pz:", Pz, "L1:", L1, "L2:", L2, "R_base:", R_base, "R_platform:", R_platform, "tilt_deg:", tilt_deg)
         theta_x, phi_y = map(math.radians, tilt_deg)
 
         # Rotation matrix for platform tilt
@@ -155,83 +172,12 @@ class BBrobot:
         return servo_angles
 
 
-    #Method to calculate inverse kinematics
-    def kinema_inv(self, n, Pz):
-        print("Inverse kinematics calculation")
-        print("Parameters:  n:", n, "Pz:", Pz)
-        L = self.L
-        print("L=", L)
-        # Servo reference height Pmz derive (+- inversion at Pmz)
-        A = (L[0]+L[1])/Pz
-        B = (Pz**2+L[2]**2-(L[0]+L[1])**2-L[3]**2)/(2*Pz)
-        C = A**2+1
-        D = 2*(A*B-(L[0]+L[1]))
-        E = B**2+(L[0]+L[1])**2-L[2]**2
-        print("A:", A, "B:", B, "C:", C, "D:", D, "E:", E              )
-        print("determinant:", D**2-4*C*E)
-        Pmx = (-D+math.sqrt(D**2-4*C*E))/(2*C)
-        Pmz = math.sqrt(L[2]**2-Pmx**2+2*(L[0]+L[1])*Pmx-(L[0]+L[1])**2)
-
-        #Derive servo a's angle
-        a_m_x = (L[3]/(math.sqrt(n[0]**2 + n[2]**2)))*(n[2])
-        a_m_y = 0
-        a_m_z = Pz + (L[3]/(math.sqrt(n[0]**2 + n[2]**2)))*(-n[0])
-        A_m = [a_m_x, a_m_y, a_m_z]
-        A = (L[0]-A_m[0])/A_m[2]
-        B = (A_m[0]**2+A_m[1]**2+A_m[2]**2-L[2]**2-L[0]**2+L[1]**2)/(2*A_m[2])
-        C = A**2+1
-        D = 2*(A*B-L[0])
-        E = B**2+L[0]**2-L[1]**2
-        ax = (-D+math.sqrt(D**2-4*C*E))/(2*C)
-        ay = 0
-        az = math.sqrt(L[1]**2-ax**2+2*L[0]*ax-L[0]**2)
-        if (a_m_z < Pmz):
-            az = -az
-        A_2 = [ax, ay, az]
-        theta_a = 90 - math.degrees(math.atan2(A_2[0]-L[0], A_2[2]))
-
-        #Derive servo b's angle
-        b_m_x = (L[3]/(math.sqrt(n[0]**2+3*n[1]**2+4*n[2]**2+2*math.sqrt(3)*n[0]*n[1])))*(-n[2])
-        b_m_y = (L[3]/(math.sqrt(n[0]**2+3*n[1]**2+4*n[2]**2+2*math.sqrt(3)*n[0]*n[1])))*(-math.sqrt(3)*n[2])
-        b_m_z = Pz + (L[3]/(math.sqrt(n[0]**2+3*n[1]**2+4*n[2]**2+2*math.sqrt(3)*n[0]*n[1])))*(math.sqrt(3)*n[1]+n[0])
-        B_m = [b_m_x, b_m_y, b_m_z]
-
-        A = -(B_m[0]+math.sqrt(3)*B_m[1]+2*L[0])/B_m[2]
-        B = (B_m[0]**2+B_m[1]**2+B_m[2]**2+L[1]**2-L[2]**2-L[0]**2)/(2*B_m[2])
-        C = A**2+4
-        D = 2*A*B+4*L[0]
-        E = B**2+L[0]**2-L[1]**2
-        x = (-D-math.sqrt(D**2-4*C*E))/(2*C)
-        y = math.sqrt(3)*x
-        z = math.sqrt(L[1]**2-4*x**2-4*L[0]*x-L[0]**2)
-        if (b_m_z < Pmz):
-            z = -z
-        B_2 = [x, y, z]
-        theta_b = 90 - math.degrees(math.atan2(math.sqrt(B_2[0]**2+B_2[1]**2)-L[0], B_2[2]))
-
-        # Servo c angle calculation
-        c_m_x = (L[3]/(math.sqrt(n[0]**2+3*n[1]**2+4*n[2]**2-2*math.sqrt(3)*n[0]*n[1])))*(-n[2])
-        c_m_y = (L[3]/(math.sqrt(n[0]**2+3*n[1]**2+4*n[2]**2-2*math.sqrt(3)*n[0]*n[1])))*(math.sqrt(3)*n[2])
-        c_m_z = Pz + (L[3]/(math.sqrt(n[0]**2+3*n[1]**2+4*n[2]**2-2*math.sqrt(3)*n[0]*n[1])))*(-math.sqrt(3)*n[1]+n[0])
-        C_m = [c_m_x, c_m_y, c_m_z]
-
-        A = -(C_m[0]-math.sqrt(3)*C_m[1]+2*L[0])/C_m[2]
-        B = (C_m[0]**2+C_m[1]**2+C_m[2]**2+L[1]**2-L[2]**2-L[0]**2)/(2*C_m[2])
-        C = A**2+4
-        D = 2*A*B+4*L[0]
-        E = B**2+L[0]**2-L[1]**2
-        x = (-D-math.sqrt(D**2-4*C*E))/(2*C)
-        y = -math.sqrt(3)*x
-        z = math.sqrt(L[1]**2-4*x**2-4*L[0]*x-L[0]**2)
-        if (c_m_z < Pmz):
-            z = -z
-        C_2 = [x, y, z]
-        theta_c = 90 - math.degrees(math.atan2(math.sqrt(C_2[0]**2+C_2[1]**2)-L[0], C_2[2]))
-        thetas = [theta_a, theta_b, theta_c]
-        return thetas
-
+   
     #Method to achieve posture (theta, phi, Pz) after t seconds
     def control_t_posture(self, pos, t):
+        ids = self.ids
+        servo = self.servo
+        
         theta = pos[0]
         phi = pos[1]
         #Operation constraints
@@ -254,11 +200,14 @@ class BBrobot:
         #L2 = upper link
         #def rrs_inverse_kinematics(self,Pz, L1, L2, R_base, R_platform, tilt_deg=(0, 0)):
         angles = self.rrs_inverse_kinematics(Pz=Pz, L1=self.L[2], L2=self.L[1], R_base=self.L[3], R_platform=self.L[0], tilt_deg= (theta, phi))
-        print("Posture angles:", pos)
-        print("Calculated angles:", angles)
-        # self.s1.control_time_rotate(angles[0], t)
-        # self.s2.control_time_rotate(angles[1], t)
-        # self.s3.control_time_rotate(angles[2], t)
+        # print("Posture angles:", pos)
+        # print("Calculated angles:", angles)
+        for j in range(len(ids)):
+            print(f"Moving servo #{j} ID: {ids[j]} to angle: {angles[j]}", end ="" )
+            servo.MoveTo(ids[j], self.angulo_to_position(angles[j]), wait=False, speed=2400, acc = 50)
+            time.sleep(t)
+        print(f"\nServo 1= {self.position_to_angulo(servo.ReadPosition(ids[0]))}, Servo 2={self.position_to_angulo(servo.ReadPosition(ids[1]))}, Servo 3={self.position_to_angulo(servo.ReadPosition(ids[2]))}")
+        
         time.sleep(t)
     
     def Initialize_posture(self):
@@ -266,14 +215,15 @@ class BBrobot:
 
         t = 1        
         
-        pos = [0,0,110]
-        self.L = [65,116,98,92]
+        # pos = [0,0,110]
+        # self.L = [65,116,98,92]
         #pos = [0, 0, 0.0632]
         #self.L = [0.07, 0.105, 0.120, 0.09]  # in meters
         #40 es la base de los servos
         #40 es la distance del brazo chico
         #65 e la distancia del brazo grande
         # self.L = [0.04, 0.04, 0.065, 0.065]
+        pos = self.ini_pos
         self.control_t_posture(pos, t)
         
         # pos = [0,0,-0.210]        
