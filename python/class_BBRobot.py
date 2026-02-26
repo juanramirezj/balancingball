@@ -41,7 +41,7 @@ class BBrobot:
         self.L = [65,116,98,92] #in millimeters
         #L = [platform radius, upper link length, lower link length, base radius]
         # Initial posture (theta, phi, pz)
-        self.ini_pos = [0, 0, 110]
+        self.ini_pos = [0, 0, 170]
         self.pz_max = 220 #0.0732
         self.pz_min = 532
         self.phi_max = 0.8 # 1rad = 57°
@@ -71,8 +71,7 @@ class BBrobot:
         servo = self.servo
         ids = self.ids
         position = [45, 45, 45] #degrees
-        for j in range(len(ids)):
-            servo.MoveTo(ids[j], self.angulo_to_position(position[j]), wait=False, speed=2400, acc = 50)
+        self.move_servos(position)
         
     
     #Method to tidy up robots
@@ -80,14 +79,96 @@ class BBrobot:
         #Turn off servo torque
         servo = self.servo
         ids = self.ids
-        position = [45, 45, 45] #degrees
-        for j in range(len(ids)):
-            servo.MoveTo(ids[j], self.angulo_to_position(position[j]), wait=False, speed=2400, acc = 50)
+        position = [60, 60, 60] #degrees
+        self.move_servos(position)
 
     def deg(self,x):
         return math.degrees(x)
 
     #New method for inverse kinematics
+
+
+
+    def rrs_inverse_kinematics_gpt(self, Pz, L1, L2, R_base, R_platform, tilt_deg=(0, 0)):
+        """
+        Inverse kinematics for a 3-RRS parallel manipulator.
+        
+        Parameters:
+            Pz: platform height (Z)
+            L1: lower link (servo to elbow)
+            L2: upper link (elbow to platform)
+            R_base: radius of base joint circle
+            R_platform: radius of platform joint circle
+            tilt_deg: (theta, phi) tilt of platform in degrees
+
+        Returns:
+            List of 3 servo angles in degrees
+        """
+        theta_deg, phi_deg = tilt_deg
+        theta_rad = math.radians(theta_deg)
+        phi_rad = math.radians(phi_deg)
+
+        # Platform normal vector from tilt angles
+        n = [
+            math.sin(phi_rad) * math.cos(theta_rad),
+            math.sin(phi_rad) * math.sin(theta_rad),
+            math.cos(phi_rad)
+        ]
+
+        # Define anchor angles of base and platform (3 legs at 0°, 120°, 240°)
+        anchor_angles_deg = [0, 120, 240]
+        servo_angles = []
+
+        for i, alpha_deg in enumerate(anchor_angles_deg):
+            alpha_rad = math.radians(alpha_deg)
+
+            # Base joint position
+            Bx = R_base * math.cos(alpha_rad)
+            By = R_base * math.sin(alpha_rad)
+            Bz = 0
+
+            # Platform joint position with tilt applied (dot product projection)
+            Px = R_platform * math.cos(alpha_rad)
+            Py = R_platform * math.sin(alpha_rad)
+            P = [
+                Px + n[0]*Pz,
+                Py + n[1]*Pz,
+                n[2]*Pz
+            ]
+
+            # Relative vector from base joint to platform joint
+            dx = P[0] - Bx
+            dy = P[1] - By
+            dz = P[2] - Bz
+            d = math.sqrt(dx**2 + dy**2 + dz**2)
+
+            # Check reachability
+            if d > (L1 + L2):
+                servo_angles.append(float('nan'))
+                continue
+
+            # Projection onto the limb's plane
+            plane_x = math.sqrt(dx**2 + dy**2)
+            plane_y = dz
+
+            # Law of cosines for angle at base servo
+            try:
+                cos_beta = (L1**2 + plane_x**2 + plane_y**2 - L2**2) / (2 * L1 * math.sqrt(plane_x**2 + plane_y**2))
+                cos_beta = max(min(cos_beta, 1), -1)
+                beta = math.acos(cos_beta)
+                gamma = math.atan2(plane_y, plane_x)
+                servo_angle = math.degrees(beta + gamma)
+            except ValueError:
+                servo_angle = float('nan')
+
+            servo_angles.append(servo_angle)
+
+        return servo_angles
+
+
+
+
+
     def rrs_inverse_kinematics(self,Pz, L1, L2, R_base, R_platform, tilt_deg=(0, 0)):
         """
         Calculate inverse kinematics for 3-RRS parallel manipulator.
@@ -172,6 +253,33 @@ class BBrobot:
         return servo_angles
 
 
+    def waitforallservos(self):
+        #  Waits until all servos have stopped moving to their target position.
+        ids = self.ids
+        servo = self.servo
+        moving = True
+        while moving:
+            moving = False
+            for sid in ids:
+                if  servo.IsMoving(sid):
+                    moving = True
+                    break
+            time.sleep(0.05)
+            
+            
+    def move_servos(self, angles):  #angles is a list of angles for each servo, in degrees
+        ids = self.ids
+        servo = self.servo
+        
+        for j in range(len(ids)):
+            #print(f"Moving servo #{j} ID: {ids[j]} to angle: {angles[j]}", end ="" )
+            servo.MoveTo(ids[j], self.angulo_to_position(angles[j]), wait=False, speed=2400, acc = 50)
+        self.waitforallservos() #wait for all servos to finish moving
+        # print(f"\nServo 1= {self.position_to_angulo(servo.ReadPosition(ids[0]))}, Servo 2={self.position_to_angulo(servo.ReadPosition(ids[1]))}, Servo 3={self.position_to_angulo(servo.ReadPosition(ids[2]))}")
+
+        #input("Press Enter to continue...")
+
+
    
     #Method to achieve posture (theta, phi, Pz) after t seconds
     def control_t_posture(self, pos, t):
@@ -199,36 +307,27 @@ class BBrobot:
         #L1 = lower link
         #L2 = upper link
         #def rrs_inverse_kinematics(self,Pz, L1, L2, R_base, R_platform, tilt_deg=(0, 0)):
+        #tilt_x = 0
+        #tilt_y = 0
+        #angles = self.rrs_inverse_kinematics(Pz=Pz, L1=self.L[2], L2=self.L[1], R_base=self.L[3], R_platform=self.L[0], tilt_deg= (tilt_x, tilt_y))
         angles = self.rrs_inverse_kinematics(Pz=Pz, L1=self.L[2], L2=self.L[1], R_base=self.L[3], R_platform=self.L[0], tilt_deg= (theta, phi))
+        #print("theta:", theta, "phi:", phi, "Pz:", Pz)
         # print("Posture angles:", pos)
         # print("Calculated angles:", angles)
-        for j in range(len(ids)):
-            print(f"Moving servo #{j} ID: {ids[j]} to angle: {angles[j]}", end ="" )
-            servo.MoveTo(ids[j], self.angulo_to_position(angles[j]), wait=False, speed=2400, acc = 50)
-            time.sleep(t)
-        print(f"\nServo 1= {self.position_to_angulo(servo.ReadPosition(ids[0]))}, Servo 2={self.position_to_angulo(servo.ReadPosition(ids[1]))}, Servo 3={self.position_to_angulo(servo.ReadPosition(ids[2]))}")
+        self.move_servos(angles)
         
         time.sleep(t)
     
+      
+        
     def Initialize_posture(self):
         # Initial posture (theta, phi, pz)
 
         t = 1        
         
-        # pos = [0,0,110]
-        # self.L = [65,116,98,92]
-        #pos = [0, 0, 0.0632]
-        #self.L = [0.07, 0.105, 0.120, 0.09]  # in meters
-        #40 es la base de los servos
-        #40 es la distance del brazo chico
-        #65 e la distancia del brazo grande
-        # self.L = [0.04, 0.04, 0.065, 0.065]
         pos = self.ini_pos
         self.control_t_posture(pos, t)
         
-        # pos = [0,0,-0.210]        
-        # self.L = [0.065, 0.12, 0.098, 0.0092]  # in meters
-        # self.control_t_posture(pos, t)
         
 
 

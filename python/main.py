@@ -15,7 +15,9 @@ def cont_rob():
 
 #Coefficients that determine the PID coefficients and the magnitude of phi
 print("Initializing robot control...")
-K_PID = [0.015, 0.0001, 0.0051] #0.015, 0.0001, 0.0051
+# kp, ki, dp
+#K_PID = [0.015, 0.0001, 0.0051] #0.015, 0.0001, 0.0051
+K_PID = [0.2, 0.000, 0.00] 
 k = 1
 a = 1
 #Instantiate the robot, camera and PID rule
@@ -28,7 +30,7 @@ pid = class_PID.PID(K_PID, k, a)
 x = -1
 y = -1
 area = -1
-goal = [0, 0]
+goal = [167,115] #center [0, 0]
 
 print("Setting up robot and initializing posture...")
 Robot.set_up()

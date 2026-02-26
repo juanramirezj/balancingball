@@ -8,7 +8,7 @@ print('This script will test the ST3215 servo motors by moving them to random po
 print('Make sure the servos are connected and powered on.')
 print('------------------------')
 print('Initializing ST3215 servo controller...')
-      
+
 
 servo = ST3215('/dev/ttyS0')
 ids = servo.ListServos()
@@ -35,7 +35,7 @@ for i in range(len(ids)):
 
 # input values for servo positions 1,2,3 
 min_position = 300
-max_position = 1000
+max_position = 1100
 while True:
     e = input(f"Enter position [servo1,servo2,servo3] ({min_position}-{max_position}) or 'q' to quit: ")
     if e == 'q':

@@ -27,6 +27,11 @@ class PID:
         # Calculate the error
         error_x = Goal[0] - Current_value[0] #x
         error_y = Goal[1] - Current_value[1] #y
+        error_x = -error_x
+        error_y = -error_y
+        
+        #dbg
+        #print(f"Current value: {Current_value}, Goal: {Goal}, Error x: {error_x}, Error y: {error_y}")
         # Calculate the integral value
         self.integral_x += error_x * (current_time - self.last_time)
         self.integral_y += error_y * (current_time - self.last_time)
@@ -44,6 +49,10 @@ class PID:
         if theta < 0:
             theta += 360
         phi = self.k * math.sqrt(output_x**2 + output_y**2)
+        
+        # Convert theta and phi to tilt degrees around x and y axes
+        tilt_x = phi * math.cos(math.radians(theta))
+        tilt_y = phi * math.sin(math.radians(theta))
 
         self.last_error_x = error_x
         self.last_error_y = error_y
@@ -51,4 +60,5 @@ class PID:
         self.last_output_y = output_y
         self.last_time = current_time
 
-        return theta, phi
+        #return theta, phi
+        return tilt_x, tilt_y
