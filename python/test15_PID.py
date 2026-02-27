@@ -1,7 +1,49 @@
 import numpy as np
 import time
 from st3215 import ST3215
+from class_OpenMV_cam import Camera
 
+# ===============================
+# CONFIGURATION
+# ===============================
+
+H = 180.0
+CENTER_X = 164.0
+CENTER_Y = 114.0
+
+MAX_ANGLE = 12.0   # degrees safety limit
+LOOP_DT = 0.02  #0.005   #200 Hz  # 0.02     # 50 Hz control loop
+
+# PID gains (you will tune these)
+Kp = 0.01 #0.0145
+Ki = 0.003
+Kd = 0.08
+
+Kp = 0.015
+Kv = 0.004   # velocity gain
+
+# ===============================
+# PID CLASS
+# ===============================
+
+class PID:
+    def __init__(self, kp, ki, kd):
+        self.kp = kp
+        self.ki = ki
+        self.kd = kd
+        self.integral = 0
+        self.prev_error = 0
+
+    def update(self, error, dt):
+        self.integral += error * dt
+        derivative = (error - self.prev_error) / dt
+        self.prev_error = error
+
+        return (self.kp * error +
+                self.ki * self.integral +
+                self.kd * derivative)
+        
+        
 # --- KINEMATICS CONFIGURATION ---
 L1 = 98.0  # Link 1 (mm)
 L2 = 120.0 # Link 2 (mm)
@@ -133,39 +175,84 @@ def compute_jacobian(h, ax_deg, ay_deg, delta=0.01):
 
     return J
 
-# --- INITIALIZE HARDWARE ---
-try:
-    servo = ST3215('/dev/ttyS0')
-    ids = servo.ListServos()
-    if len(ids) < 3:
-        print(f"Only found {len(ids)} servos. Check connections.")
-        exit()
-except Exception as e:
-    print(f"Hardware error: {e}")
-    exit()
+# ===============================
+# INITIALIZE HARDWARE
+# ===============================
 
-# --- MAIN CONTROL LOOP ---
-HOME_HEIGHT = compute_home_height()
-print("Real home height:", HOME_HEIGHT)
+servo = ST3215('/dev/ttyS0')
+ids = servo.ListServos()
 
-print("Enter parameters: Height(mm), AngleX(deg), AngleY(deg)")
+cam = Camera()
+cam.center_x = CENTER_X
+cam.center_y = CENTER_Y
+
+pid_x = PID(Kp, Ki, Kd)
+pid_y = PID(Kp, Ki, Kd)
+
+print("Ball balancing started...")
+
+# ===============================
+# MAIN LOOP
+# ===============================
+
+ax = 0.0
+ay = 0.0
+
+prev_x = 0
+prev_y = 0
+
 while True:
-    entry = input("\nInput (e.g. 150, 10, -5) or 'q' to quit: ")
-    if entry.lower() == 'q':
-        break
+    start_time = time.time()
+
+    ball_x, ball_y = cam.find_ball()
+
+    if ball_x == -1:
+        continue
+
+    vel_x = (ball_x - prev_x) / LOOP_DT
+    vel_y = (ball_y - prev_y) / LOOP_DT
+
+    prev_x = ball_x
+    prev_y = ball_y
+
+    # Error (ball relative to center)
+    error_x = ball_x
+    error_y = ball_y
+
+    # PID outputs
+    control_x = pid_x.update(error_x, LOOP_DT)
+    control_y = pid_y.update(error_y, LOOP_DT)
+
+    # Map to platform angles
+    # From your experiments:
+    # +AX → ball +Y
+    # +AY → ball -X
+    #ax = -control_y
+    #ay =  control_x
     
-    try:
-        h, ax, ay = map(float, entry.split(','))
-        
-        # Calculate steps
-        positions = solve_ik(h, ax, ay)
-        
-        print(f"Moving to: H={h}mm, AX={ax}°, AY={ay}°")
-        for i in range(3):
-            print(f"  Servo {ids[i]} -> Position: {positions[i]}")
-            servo.MoveTo(ids[i], positions[i], wait=False, speed=2400, acc=50)
-            
-    except ValueError as e:
-        print(f"Error: {e}. Ensure 3 numbers are entered.")
-    except Exception as e:
-        print(f"Unexpected error: {e}")
+    ANGLE_SCALE = 0.5   # reduces aggressiveness
+
+    ax = -control_y * ANGLE_SCALE
+    ay =  control_x * ANGLE_SCALE    
+    
+
+
+    ax = -(Kp * error_y + Kv * vel_y)
+    ay =  (Kp * error_x + Kv * vel_x)
+    # Limit angles
+    ax = max(-MAX_ANGLE, min(MAX_ANGLE, ax))
+    ay = max(-MAX_ANGLE, min(MAX_ANGLE, ay))
+
+    # Inverse kinematics
+    positions = solve_ik(H, ax, ay)
+
+    # Move servos
+    for i in range(3):
+        servo.MoveTo(ids[i], positions[i],
+                     wait=False, speed=2400, acc=50)
+
+    # Maintain loop timing
+    elapsed = time.time() - start_time
+    sleep_time = LOOP_DT - elapsed
+    if sleep_time > 0:
+        time.sleep(sleep_time)

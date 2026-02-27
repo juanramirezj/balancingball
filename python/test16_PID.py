@@ -1,7 +1,46 @@
 import numpy as np
 import time
 from st3215 import ST3215
+from class_OpenMV_cam import Camera
 
+# ===============================
+# CONFIGURATION
+# ===============================
+
+H = 165.0
+CENTER_X = 176 # 164.0
+CENTER_Y = 122 # 114.0
+
+MAX_ANGLE = 8.0 #5   # degrees safety limit
+LOOP_DT = 0.02  #0.005   #200 Hz  # 0.02     # 50 Hz control loop
+
+# PID gains (you will tune these)
+Kd = 0.08
+Kp = 0.004
+Kv = 0.001   # velocity gain
+
+# ===============================
+# PID CLASS
+# ===============================
+
+class PID:
+    def __init__(self, kp, ki, kd):
+        self.kp = kp
+        self.ki = ki
+        self.kd = kd
+        self.integral = 0
+        self.prev_error = 0
+
+    def update(self, error, dt):
+        self.integral += error * dt
+        derivative = (error - self.prev_error) / dt
+        self.prev_error = error
+
+        return (self.kp * error +
+                self.ki * self.integral +
+                self.kd * derivative)
+        
+        
 # --- KINEMATICS CONFIGURATION ---
 L1 = 98.0  # Link 1 (mm)
 L2 = 120.0 # Link 2 (mm)
@@ -133,39 +172,110 @@ def compute_jacobian(h, ax_deg, ay_deg, delta=0.01):
 
     return J
 
-# --- INITIALIZE HARDWARE ---
-try:
-    servo = ST3215('/dev/ttyS0')
-    ids = servo.ListServos()
-    if len(ids) < 3:
-        print(f"Only found {len(ids)} servos. Check connections.")
-        exit()
-except Exception as e:
-    print(f"Hardware error: {e}")
-    exit()
+# ===============================
+# INITIALIZE HARDWARE
+# ===============================
 
-# --- MAIN CONTROL LOOP ---
-HOME_HEIGHT = compute_home_height()
-print("Real home height:", HOME_HEIGHT)
+servo = ST3215('/dev/ttyS0')
+ids = servo.ListServos()
 
-print("Enter parameters: Height(mm), AngleX(deg), AngleY(deg)")
+cam = Camera()
+cam.center_x = CENTER_X
+cam.center_y = CENTER_Y
+
+
+
+print("Ball balancing started...")
+
+# ===============================
+# MAIN LOOP
+# ===============================
+
+# ===============================
+# MAIN LOOP
+# ===============================
+
+ax = 0.0
+ay = 0.0
+
+prev_error_x = 0
+prev_error_y = 0
+prev_vel_x = 0
+prev_vel_y = 0
+
+TARGET_DT = 0.02   # 50 Hz (your real speed)
+prev_time = time.time()
+
 while True:
-    entry = input("\nInput (e.g. 150, 10, -5) or 'q' to quit: ")
-    if entry.lower() == 'q':
-        break
+    loop_start = time.time()
+
+    dt = loop_start - prev_time
+    dt = min(max(dt, 0.001), 0.02)
+    prev_time = loop_start
+
+    ball_x, ball_y = cam.find_ball()
+
+    if ball_x == -1:
+        continue
+
+    # ----------------------------
+    # 1. Compute current error
+    # ----------------------------
+    error_x = ball_x - CENTER_X
+    error_y = ball_y - CENTER_Y
+
+    # Dead zone
+    DEAD_ZONE = 3
+    if abs(error_x) < DEAD_ZONE:
+        error_x = 0
+    if abs(error_y) < DEAD_ZONE:
+        error_y = 0
+
+    # ----------------------------
+    # 2. Velocity (based on error)
+    # ----------------------------
+    raw_vel_x = (error_x - prev_error_x) / dt
+    raw_vel_y = (error_y - prev_error_y) / dt
+
+    alpha = 0.4
+    vel_x = alpha * raw_vel_x + (1 - alpha) * prev_vel_x
+    vel_y = alpha * raw_vel_y + (1 - alpha) * prev_vel_y
+
+    # ----------------------------
+    # 3. Save for next loop
+    # ----------------------------
+    prev_error_x = error_x
+    prev_error_y = error_y
+    prev_vel_x = vel_x
+    prev_vel_y = vel_y
+
+    # ----------------------------
+    # 4. Control law
+    # ----------------------------
+    #ax = -(Kp * error_y + Kv * vel_y)
+    #ay =  (Kp * error_x + Kv * vel_x)
+    ax = -(Kp * error_y )
+    ay = -(Kp * error_x )
+
+    ax = max(-MAX_ANGLE, min(MAX_ANGLE, ax))
+    ay = max(-MAX_ANGLE, min(MAX_ANGLE, ay))
+
+    #test
+    #ax = 0
+    #ay = -3
     
-    try:
-        h, ax, ay = map(float, entry.split(','))
-        
-        # Calculate steps
-        positions = solve_ik(h, ax, ay)
-        
-        print(f"Moving to: H={h}mm, AX={ax}°, AY={ay}°")
-        for i in range(3):
-            print(f"  Servo {ids[i]} -> Position: {positions[i]}")
-            servo.MoveTo(ids[i], positions[i], wait=False, speed=2400, acc=50)
-            
-    except ValueError as e:
-        print(f"Error: {e}. Ensure 3 numbers are entered.")
-    except Exception as e:
-        print(f"Unexpected error: {e}")
+    ax = -Kp * error_y
+    ay = -Kp * error_x
+    positions = solve_ik(H, ax, ay)
+
+    for i in range(3):
+        servo.MoveTo(ids[i], positions[i],
+                     wait=False, speed=2400, acc=50)
+
+    # ----------------------------
+    # Maintain 50 Hz
+    # ----------------------------
+    elapsed = time.time() - loop_start
+    sleep_time = TARGET_DT - elapsed
+    if sleep_time > 0:
+        time.sleep(sleep_time)
