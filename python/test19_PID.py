@@ -11,7 +11,7 @@ H = 180.0
 CENTER_X = 164.0
 CENTER_Y = 114.0
 
-MAX_ANGLE = 12.0   # degrees safety limit
+MAX_ANGLE = 8.0   # degrees safety limit
 LOOP_DT = 0.02  #0.005   #200 Hz  # 0.02     # 50 Hz control loop
 
 # PID gains (you will tune these)
@@ -19,8 +19,8 @@ Kp = 0.01 #0.0145
 Ki = 0.003
 Kd = 0.08
 
-Kp = 0.015
-Kv = 0.004   # velocity gain
+Kp = 0.012
+Kv = 0.0004   # velocity gain
 
 # ===============================
 # PID CLASS
@@ -201,6 +201,15 @@ ay = 0.0
 prev_x = 0
 prev_y = 0
 
+vel_x = 0
+vel_y = 0
+
+# ---- identified inverse Jacobian ----
+Jinv = np.array([
+    [-0.054,  0.027],
+    [-0.121, -0.486]
+])
+
 while True:
     start_time = time.time()
 
@@ -209,8 +218,13 @@ while True:
     if ball_x == -1:
         continue
 
-    vel_x = (ball_x - prev_x) / LOOP_DT
-    vel_y = (ball_y - prev_y) / LOOP_DT
+    alpha = 0.8   # smoothing (0.7–0.9 works well)
+
+    raw_vx = (ball_x - prev_x) / LOOP_DT
+    raw_vy = (ball_y - prev_y) / LOOP_DT
+
+    vel_x = alpha * vel_x + (1 - alpha) * raw_vx
+    vel_y = alpha * vel_y + (1 - alpha) * raw_vy
 
     prev_x = ball_x
     prev_y = ball_y
@@ -218,34 +232,16 @@ while True:
     # Error (ball relative to center)
     error_x = ball_x
     error_y = ball_y
-
-    # PID outputs
-    control_x = pid_x.update(error_x, LOOP_DT)
-    control_y = pid_y.update(error_y, LOOP_DT)
-
-    # Map to platform angles
-    # From your experiments:
-    # +AX → ball +Y
-    # +AY → ball -X
-    #ax = -control_y
-    #ay =  control_x
     
-    ANGLE_SCALE = 0.5   # reduces aggressiveness
-
-    ax = -control_y * ANGLE_SCALE
-    ay =  control_x * ANGLE_SCALE    
+    e = np.array([error_x, error_y])
     
-
-
-    ax = -(Kp * error_y + Kv * vel_y)
-    ay =  (Kp * error_x + Kv * vel_x)
-    # Limit angles
-    ax = max(-MAX_ANGLE, min(MAX_ANGLE, ax))
-    ay = max(-MAX_ANGLE, min(MAX_ANGLE, ay))
+    # --- PD control with velocity feedback ---
+    u = Kp * (Jinv @ e)
+    ax = u[0]
+    ay = u[1]
+       
     
-    print("Camera position: ({:.2f}, {:.2f}), Velocity: ({:.2f}, {:.2f}), Control: ({:.2f}, {:.2f}), Angles: ({:.2f}, {:.2f})".format(
-        ball_x, ball_y, vel_x, vel_y, control_x, control_y, ax, ay
-    ))
+    print("Camera position: ({:.2f}, {:.2f}), Velocity: ({:.2f}, {:.2f}),  Angles: ({:.2f}, {:.2f})".format(ball_x, ball_y, vel_x, vel_y, ax, ay  ))
 
     # Inverse kinematics
     positions = solve_ik(H, ax, ay)

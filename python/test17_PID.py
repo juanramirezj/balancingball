@@ -7,20 +7,17 @@ from class_OpenMV_cam import Camera
 # CONFIGURATION
 # ===============================
 
-H = 180.0
-CENTER_X = 164.0
-CENTER_Y = 114.0
+H = 165.0
+CENTER_X = 176 # 164.0
+CENTER_Y = 122 # 114.0
 
-MAX_ANGLE = 12.0   # degrees safety limit
-LOOP_DT = 0.02  #0.005   #200 Hz  # 0.02     # 50 Hz control loop
+MAX_ANGLE = 8.0 #5   # degrees safety limit
+LOOP_DT = 0.005 #0.02  #0.005   #200 Hz  # 0.02     # 50 Hz control loop
 
 # PID gains (you will tune these)
-Kp = 0.01 #0.0145
-Ki = 0.003
-Kd = 0.08
-
-Kp = 0.015
-Kv = 0.004   # velocity gain
+Kd = 0.006
+Kp = 0.03
+Kv = 0.003   # velocity gain
 
 # ===============================
 # PID CLASS
@@ -186,10 +183,34 @@ cam = Camera()
 cam.center_x = CENTER_X
 cam.center_y = CENTER_Y
 
-pid_x = PID(Kp, Ki, Kd)
-pid_y = PID(Kp, Ki, Kd)
+
+# ===============================
+# PLATFORM AXES (AUTO CALIBRATED)
+# ===============================
+# CAMERA → PLATFORM calibration matrix
+CAL = np.array([
+    [ 0.035, -0.020],
+    [-0.010, -0.030]
+])
+
+# --- measured servo positions in camera coordinates ---
+S1 = np.array([99.0, 96.0])     # servo 1
+S2 = np.array([227.0, 61.0])    # servo 2
+S3 = np.array([184.0, 187.0])   # servo 3
+
+# normalize
+axis_ay = np.array([-77.0, -26.0])   # toward servo 1
+axis_ax = np.array([-34.5, 19.5])    # midpoint of servo1 & servo3
+
+
+axis_ax /= np.linalg.norm(axis_ax)
+axis_ay /= np.linalg.norm(axis_ay)
 
 print("Ball balancing started...")
+
+# ===============================
+# MAIN LOOP
+# ===============================
 
 # ===============================
 # MAIN LOOP
@@ -198,65 +219,59 @@ print("Ball balancing started...")
 ax = 0.0
 ay = 0.0
 
-prev_x = 0
-prev_y = 0
+prev_error_x = 0
+prev_error_y = 0
+prev_vel_x = 0
+prev_vel_y = 0
+
+TARGET_DT = 0.02   # 50 Hz (your real speed)
+prev_time = time.time()
+
+
 
 while True:
-    start_time = time.time()
+    loop_start = time.time()
+
+    dt = loop_start - prev_time
+    dt = min(max(dt, 0.001), 0.02)
+    prev_time = loop_start
 
     ball_x, ball_y = cam.find_ball()
+    
+    print(f"Ball position: ({ball_x}, {ball_y})")
 
     if ball_x == -1:
         continue
 
-    vel_x = (ball_x - prev_x) / LOOP_DT
-    vel_y = (ball_y - prev_y) / LOOP_DT
+    # ----------------------------
+    # 1. Compute current error
+    # ----------------------------
+    # --- camera error ---
+    ex = ball_x
+    ey = -ball_y   # keep Y inversion if needed
 
-    prev_x = ball_x
-    prev_y = ball_y
-
-    # Error (ball relative to center)
-    error_x = ball_x
-    error_y = ball_y
-
-    # PID outputs
-    control_x = pid_x.update(error_x, LOOP_DT)
-    control_y = pid_y.update(error_y, LOOP_DT)
-
-    # Map to platform angles
-    # From your experiments:
-    # +AX → ball +Y
-    # +AY → ball -X
-    #ax = -control_y
-    #ay =  control_x
+    e = np.array([ex, ey])
     
-    ANGLE_SCALE = 0.5   # reduces aggressiveness
+    tilt = -Kp * CAL @ e
 
-    ax = -control_y * ANGLE_SCALE
-    ay =  control_x * ANGLE_SCALE    
-    
+    ax = tilt[0]
+    ay = tilt[1]
 
+    ax = np.clip(ax, -MAX_ANGLE, MAX_ANGLE)
+    ay = np.clip(ay, -MAX_ANGLE, MAX_ANGLE)
 
-    ax = -(Kp * error_y + Kv * vel_y)
-    ay =  (Kp * error_x + Kv * vel_x)
-    # Limit angles
-    ax = max(-MAX_ANGLE, min(MAX_ANGLE, ax))
-    ay = max(-MAX_ANGLE, min(MAX_ANGLE, ay))
-    
-    print("Camera position: ({:.2f}, {:.2f}), Velocity: ({:.2f}, {:.2f}), Control: ({:.2f}, {:.2f}), Angles: ({:.2f}, {:.2f})".format(
-        ball_x, ball_y, vel_x, vel_y, control_x, control_y, ax, ay
-    ))
+    print(f"Error: {e}, ax: {ax:.2f}, ay: {ay:.2f}")
 
-    # Inverse kinematics
     positions = solve_ik(H, ax, ay)
 
-    # Move servos
     for i in range(3):
         servo.MoveTo(ids[i], positions[i],
                      wait=False, speed=2400, acc=50)
 
-    # Maintain loop timing
-    elapsed = time.time() - start_time
-    sleep_time = LOOP_DT - elapsed
+    # ----------------------------
+    # Maintain 50 Hz
+    # ----------------------------
+    elapsed = time.time() - loop_start
+    sleep_time = TARGET_DT - elapsed
     if sleep_time > 0:
         time.sleep(sleep_time)

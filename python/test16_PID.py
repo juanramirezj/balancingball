@@ -12,12 +12,12 @@ CENTER_X = 176 # 164.0
 CENTER_Y = 122 # 114.0
 
 MAX_ANGLE = 8.0 #5   # degrees safety limit
-LOOP_DT = 0.02  #0.005   #200 Hz  # 0.02     # 50 Hz control loop
+LOOP_DT = 0.005 #0.02  #0.005   #200 Hz  # 0.02     # 50 Hz control loop
 
 # PID gains (you will tune these)
-Kd = 0.08
-Kp = 0.004
-Kv = 0.001   # velocity gain
+Kd = 0.006
+Kp = 0.03
+Kv = 0.003   # velocity gain
 
 # ===============================
 # PID CLASS
@@ -42,8 +42,8 @@ class PID:
         
         
 # --- KINEMATICS CONFIGURATION ---
-L1 = 98.0  # Link 1 (mm)
-L2 = 120.0 # Link 2 (mm)
+L1 = 100.0  # Link 1 (mm)
+L2 = 114.0 # Link 2 (mm)
 BASE_RADIUS = 92.0
 PLAT_RADIUS = 65.0
 
@@ -222,7 +222,7 @@ while True:
     # 1. Compute current error
     # ----------------------------
     error_x = ball_x - CENTER_X
-    error_y = ball_y - CENTER_Y
+    error_y = CENTER_Y - ball_y # ball_y - CENTER_Y
 
     # Dead zone
     DEAD_ZONE = 3
@@ -240,6 +240,11 @@ while True:
     alpha = 0.4
     vel_x = alpha * raw_vel_x + (1 - alpha) * prev_vel_x
     vel_y = alpha * raw_vel_y + (1 - alpha) * prev_vel_y
+    
+    VEL_LIMIT = 400
+
+    vel_x = max(-VEL_LIMIT, min(VEL_LIMIT, vel_x))
+    vel_y = max(-VEL_LIMIT, min(VEL_LIMIT, vel_y))
 
     # ----------------------------
     # 3. Save for next loop
@@ -252,20 +257,27 @@ while True:
     # ----------------------------
     # 4. Control law
     # ----------------------------
-    #ax = -(Kp * error_y + Kv * vel_y)
-    #ay =  (Kp * error_x + Kv * vel_x)
-    ax = -(Kp * error_y )
-    ay = -(Kp * error_x )
+    # controller in camera frame
+    ux = -Kp * error_x
+    uy = -Kp * error_y
 
+    # rotate into platform frame
+    ax = uy
+    ay = -ux
+    
+    ax = 5
+    ay = 5
+    
+
+    # limits
     ax = max(-MAX_ANGLE, min(MAX_ANGLE, ax))
     ay = max(-MAX_ANGLE, min(MAX_ANGLE, ay))
 
-    #test
-    #ax = 0
-    #ay = -3
-    
-    ax = -Kp * error_y
-    ay = -Kp * error_x
+
+    print(f"err=({error_x:.1f},{error_y:.1f}) "
+        f"vel=({vel_x:.1f},{vel_y:.1f}) "
+        f"ang=({ax:.2f},{ay:.2f})")
+
     positions = solve_ik(H, ax, ay)
 
     for i in range(3):
