@@ -11,16 +11,15 @@ H = 180.0
 CENTER_X = 164.0
 CENTER_Y = 114.0
 
-MAX_ANGLE = 8.0   # degrees safety limit
-LOOP_DT = 0.02  #0.005   #200 Hz  # 0.02     # 50 Hz control loop
+MAX_ANGLE = 16.0   # degrees safety limit
+LOOP_DT = 0.005 # 0.02  #0.005   #200 Hz  # 0.02     # 50 Hz control loop
 
 # PID gains (you will tune these)
-Kp = 0.01 #0.0145
+Kp = 0.015 #0.0145
 Ki = 0.003
 Kd = 0.08
-
-Kp = 0.012
-Kv = 0.0004   # velocity gain
+Kv = 0.03   # velocity gain
+Ki_pos = 0.0015  
 
 # ===============================
 # PID CLASS
@@ -49,6 +48,11 @@ L1 = 100.0  # Link 1 (mm)
 L2 = 114.0 # Link 2 (mm)
 BASE_RADIUS = 92.0
 PLAT_RADIUS = 65.0
+
+def friction_boost(angle, threshold=0.5, boost=1.2):
+    if abs(angle) < threshold:
+        return angle + np.sign(angle) * boost
+    return angle
 
 # --- SERVO MAPPING FUNCTION ---
 def angulo_to_position(angulo):
@@ -198,6 +202,9 @@ print("Ball balancing started...")
 ax = 0.0
 ay = 0.0
 
+prev_ax = 0.0
+prev_ay = 0.0
+
 prev_x = 0
 prev_y = 0
 
@@ -205,10 +212,27 @@ vel_x = 0
 vel_y = 0
 
 # ---- identified inverse Jacobian ----
-Jinv = np.array([
+Jinv = 8.0 *np.array([
     [-0.054,  0.027],
     [-0.121, -0.486]
 ])
+
+
+CENTER_OFFSET_X = -62
+CENTER_OFFSET_Y = 10
+
+prev_x, prev_y = cam.find_ball()
+vel_x = vel_y = 0.0
+
+
+CAM_ROT = np.radians(90)   # ← WILL CALIBRATE
+
+R_cam2plat = np.array([
+    [np.cos(CAM_ROT), -np.sin(CAM_ROT)],
+    [np.sin(CAM_ROT),  np.cos(CAM_ROT)]
+])
+
+int_error = np.array([0.0, 0.0])
 
 while True:
     start_time = time.time()
@@ -216,6 +240,7 @@ while True:
     ball_x, ball_y = cam.find_ball()
 
     if ball_x == -1:
+        time.sleep(LOOP_DT)
         continue
 
     alpha = 0.8   # smoothing (0.7–0.9 works well)
@@ -230,23 +255,70 @@ while True:
     prev_y = ball_y
 
     # Error (ball relative to center)
-    error_x = ball_x
-    error_y = ball_y
+    error_x = ball_x - CENTER_OFFSET_X
+    error_y = ball_y - CENTER_OFFSET_Y
     
-    e = np.array([error_x, error_y])
+    # rotation between camera and platform (degrees)
+
+
+    e_platform = R_cam2plat @ np.array([error_x, error_y])
+    E_MAX = 60.0
+    e_platform = E_MAX * np.tanh(e_platform / E_MAX)
+
+    int_error += e_platform * LOOP_DT  
+    INT_LIM = 200
+    int_error = np.clip(int_error, -INT_LIM, INT_LIM)  
+    
+    v_platform = R_cam2plat @ np.array([vel_x, vel_y])
+    VEL_MAX = 150
+    v_platform = np.clip(v_platform, -VEL_MAX, VEL_MAX)
+    
+    # nonlinear compression
+    E_MAX = 60.0   # pixels (tune 40–80)
+
+
+    
     
     # --- PD control with velocity feedback ---
-    u = Kp * (Jinv @ e)
+    dist = np.linalg.norm(e_platform)
+    Kv_eff = Kv * (1 / (1 + 0.01 * dist))
+    
+    
+    u = (
+        Kp * (Jinv @ e_platform)
+        + Ki_pos * (Jinv @ int_error)
+        - Kv_eff * (Jinv @ v_platform)
+    )
+    
+    #print("Error (platform): ({:.2f}, {:.2f}), Velocity (platform): ({:.2f}, {:.2f}), Control output (ax, ay): ({:.2f}, {:.2f})".format(e_platform[0], e_platform[1], v_platform[0], v_platform[1], u[0], u[1]))
+    
+    #ax += u[0] * LOOP_DT
+    #ay += u[1] * LOOP_DT
+    
     ax = u[0]
     ay = u[1]
        
-    
-    print("Camera position: ({:.2f}, {:.2f}), Velocity: ({:.2f}, {:.2f}),  Angles: ({:.2f}, {:.2f})".format(ball_x, ball_y, vel_x, vel_y, ax, ay  ))
+    MAX_RATE = 120 * LOOP_DT   # deg/sec
+
+    ax = np.clip(ax, prev_ax - MAX_RATE, prev_ax + MAX_RATE)
+    ay = np.clip(ay, prev_ay - MAX_RATE, prev_ay + MAX_RATE)
+
+    prev_ax = ax
+    prev_ay = ay
+
+    tilt_mag = np.sqrt(ax**2 + ay**2)
+
+    if tilt_mag > MAX_ANGLE:
+        scale = MAX_ANGLE / tilt_mag
+        ax *= scale
+        ay *= scale
 
     # Inverse kinematics
     positions = solve_ik(H, ax, ay)
 
-    # Move servos
+    #print("Camera position: ({:.2f}, {:.2f}), Error: ({:.2f}, {:.2f}), Velocity: ({:.2f}, {:.2f}), Angles: ({:.2f}, {:.2f}), Servo positions: ({:.2f}, {:.2f}, {:.2f}), Tilt magniture: {:.2f}".format(ball_x, ball_y, error_x, error_y, vel_x, vel_y, ax, ay, positions[0], positions[1], positions[2], np.sqrt(ax**2 + ay**2) ))
+        
+        # Move servos
     for i in range(3):
         servo.MoveTo(ids[i], positions[i],
                      wait=False, speed=2400, acc=50)
