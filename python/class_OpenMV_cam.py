@@ -3,7 +3,7 @@ import threading
 
 class Camera:
     def __init__(self, port='/dev/ttyACM0', baudrate=115200):
-        self.center_x = 164.0
+        self.center_x = 0 #164.0
         self.center_y = 114.0
 
         self.port = port
@@ -18,8 +18,11 @@ class Camera:
 
         self.lock = threading.Lock()
 
-        self.x = -1.0
-        self.y = -1.0
+        #self.x = -1.0
+        #self.y = -1.0
+        
+        self.x = 0.0
+        self.y = 0.0
 
         self.running = True
 
